@@ -50,6 +50,39 @@ export default function EditorLayout() {
     setIsConfirmAIOpen(true);
   };
 
+  const pollTaskStatus = async (taskId: string) => {
+    // Initial wait of 40 seconds as requested by the user
+    console.log(`Waiting 40 seconds before first poll for task ${taskId}...`);
+    await new Promise(resolve => setTimeout(resolve, 40000));
+
+    let attempts = 0;
+    const maxAttempts = 30; // 30 * 10s = 300s (5 minutes) limit
+
+    while (attempts < maxAttempts) {
+      console.log(`Polling task ${taskId} (Attempt ${attempts + 1})...`);
+      const res = await fetch(`/api/vision/tasks/${taskId}`);
+      if (!res.ok) {
+        throw new Error("Erro ao verificar status do processamento");
+      }
+
+      const data = await res.json();
+      if (data.status === "completed" && data.result) {
+        return data.result;
+      }
+
+      if (data.status === "failed") {
+        throw new Error(data.error || "O processamento da IA falhou");
+      }
+
+      // If status is "awaiting" or "processing", wait 10 seconds and poll again
+      console.log(`Task status: ${data.status}. Waiting 10 seconds...`);
+      await new Promise(resolve => setTimeout(resolve, 10000));
+      attempts++;
+    }
+
+    throw new Error("Tempo limite de processamento excedido (Timeout)");
+  };
+
   const handleConfirmAI = async () => {
     if (!pendingFile) return;
     setIsConfirmAIOpen(false);
@@ -66,11 +99,14 @@ export default function EditorLayout() {
 
       if (!res.ok) {
         const errorData = await res.json();
-        throw new Error(errorData.error || "Failed to process image");
+        throw new Error(errorData.error || "Failed to start image processing");
       }
       
-      const data = await res.json();
-      loadAIStageConfig(data);
+      const { task_id } = await res.json();
+      if (!task_id) throw new Error("Não foi possível iniciar a tarefa de processamento");
+
+      const result = await pollTaskStatus(task_id);
+      loadAIStageConfig(result);
     } catch (err: unknown) {
       console.error(err);
       const message = err instanceof Error ? err.message : "Erro ao processar imagem pela IA";
@@ -123,11 +159,14 @@ export default function EditorLayout() {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to process refined image");
+        throw new Error(errorData.error || "Failed to start refined image processing");
       }
       
-      const data = await response.json();
-      loadAIStageConfig(data);
+      const { task_id } = await response.json();
+      if (!task_id) throw new Error("Não foi possível iniciar a tarefa de refinamento");
+
+      const result = await pollTaskStatus(task_id);
+      loadAIStageConfig(result);
     } catch (err: unknown) {
       console.error("Refinement error:", err);
       const message = err instanceof Error ? err.message : "Erro no refinamento da IA";

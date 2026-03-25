@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
     const backendFormData = new FormData();
     backendFormData.append("file", file);
 
-    const response = await fetch(`${BACKEND_URL}/api/v1/vision/map-floorplan`, {
+    const response = await fetch(`${BACKEND_URL}/api/v1/vision/map-floorplan-async`, {
       method: "POST",
       body: backendFormData,
     });
@@ -74,42 +74,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const data: BackendResponse = await response.json();
-    console.log(`Received data from Go backend. Rooms: ${data.rooms?.length || 0}`);
-
-    // Map Go backend structure to Frontend expected structure
-    // Go: { rooms: [...], doors: [...], stairs: [...] }
-    // Frontend: { polygons: [...], doors: [...], stairs: [...] }
-    const mappedData = {
-      project_name: data.n || "New Project",
-      polygons: (data.rooms || []).map((room: BackendRoom) => ({
-        id: room.id || `poly-${Math.random().toString(36).substr(2, 9)}`,
-        name: room.n || "Ambiente",
-        points: (room.pts || room.vertices || []).map((v: [number, number] | BackendPoint) => ({
-          x: Array.isArray(v) ? v[0] : v.x,
-          y: Array.isArray(v) ? v[1] : v.y
-        })),
-        color: room.c || "lavender",
-      })),
-      doors: (data.doors || []).map((door: BackendDoor) => ({
-        id: door.id || `door-${Math.random().toString(36).substr(2, 9)}`,
-        x_norm: Array.isArray(door.p) ? door.p[0] : door.x,
-        y_norm: Array.isArray(door.p) ? door.p[1] : door.y,
-        rotation: door.rot,
-      })),
-      stairs: (data.stairs || []).map((stair: BackendStair) => ({
-        id: stair.id || `stair-${Math.random().toString(36).substr(2, 9)}`,
-        x_norm: Array.isArray(stair.p) ? stair.p[0] : stair.x,
-        y_norm: Array.isArray(stair.p) ? stair.p[1] : stair.y,
-        width_norm: stair.w,
-        length_norm: stair.l,
-        type: stair.t,
-        steps: stair.s,
-        rotation: stair.rot,
-      })),
-    };
-
-    return NextResponse.json(mappedData);
+    const data = await response.json();
+    return NextResponse.json(data);
 
   } catch (error: unknown) {
     console.error("BFF Error:", error);

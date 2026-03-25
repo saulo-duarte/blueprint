@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -18,11 +19,29 @@ import (
 	"github.com/blueprint/backend/internal/vision"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"sync"
 )
 
 type VisionHandler struct {
 	VisionClient *vision.Client
 	Sanitizer    *geometry.Sanitizer
+	Tasks        sync.Map
+}
+
+type TaskStatus string
+
+const (
+	TaskStatusAwaiting   TaskStatus = "awaiting"
+	TaskStatusProcessing TaskStatus = "processing"
+	TaskStatusCompleted  TaskStatus = "completed"
+	TaskStatusFailed     TaskStatus = "failed"
+)
+
+type ProcessingTask struct {
+	ID     string               `json:"id"`
+	Status TaskStatus           `json:"status"`
+	Result *geometry.AIResponse `json:"result,omitempty"`
+	Error  string               `json:"error,omitempty"`
 }
 
 func NewVisionHandler(vc *vision.Client) *VisionHandler {
@@ -115,6 +134,125 @@ func (h *VisionHandler) MapFloorplan(c *fiber.Ctx) error {
 	h.saveResponseToJSON(&response)
 
 	return c.JSON(response)
+}
+
+func (h *VisionHandler) MapFloorplanAsync(c *fiber.Ctx) error {
+	file, err := c.FormFile("file")
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "No file provided"})
+	}
+
+	// Read file content
+	src, err := file.Open()
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to open file"})
+	}
+	defer src.Close()
+
+	data, err := io.ReadAll(src)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to read file"})
+	}
+
+	// Extract image dimensions
+	imgConfig, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		log.Printf("[ERROR] Failed to decode image: %v (data length: %d)", err, len(data))
+		return c.Status(400).JSON(fiber.Map{
+			"error": fmt.Sprintf("Failed to decode image dimensions: %v. Certifique-se de que é um PNG, JPEG ou WebP válido.", err),
+		})
+	}
+	log.Printf("[INFO] Decoded image format: %s (%dx%d)", format, imgConfig.Width, imgConfig.Height)
+
+	// Extract optional refinement prompt
+	refinementPrompt := c.FormValue("refinement_prompt")
+	contentType := file.Header.Get("Content-Type")
+
+	// Create Task
+	taskID := uuid.New().String()
+	task := &ProcessingTask{
+		ID:     taskID,
+		Status: TaskStatusAwaiting,
+	}
+	h.Tasks.Store(taskID, task)
+
+	// Start Background Processing
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[PANIC] Background process panicked: %v", r)
+				task.Status = TaskStatusFailed
+				task.Error = fmt.Sprintf("Internal error: %v", r)
+			}
+		}()
+
+		task.Status = TaskStatusProcessing
+		
+		// 1. Vision Analyst Agent
+		analystReport, err := h.VisionClient.AnalyzeFloorPlan(context.Background(), data, contentType, imgConfig.Width, imgConfig.Height, refinementPrompt)
+		if err != nil {
+			log.Printf("[ERROR] Analyst Agent failed for task %s: %v", taskID, err)
+			task.Status = TaskStatusFailed
+			task.Error = fmt.Sprintf("Analyst Agent failed: %v", err)
+			return
+		}
+
+		if len(analystReport.Environments) == 0 {
+			task.Status = TaskStatusFailed
+			task.Error = "No valid environments detected by the Analyst Agent"
+			return
+		}
+
+		// 2. Vision Builder Agent
+		msg, err := h.VisionClient.ProcessFloorplan(context.Background(), data, contentType, analystReport, refinementPrompt)
+		if err != nil {
+			log.Printf("[ERROR] Builder Agent failed for task %s: %v", taskID, err)
+			task.Status = TaskStatusFailed
+			task.Error = fmt.Sprintf("Builder Agent failed: %v", err)
+			return
+		}
+
+		response := geometry.AIResponse{
+			Rooms:  []geometry.Room{},
+			Doors:  []geometry.Door{},
+			Errors: []string{},
+		}
+
+		// Handle Tool Use
+		for _, block := range msg.Content {
+			if block.Type == "tool_use" {
+				h.handleToolUse(block, &response)
+			}
+		}
+
+		// Final Sanitization Loop
+		for i := range response.Rooms {
+			h.Sanitizer.SanitizeRoom(&response.Rooms[i])
+		}
+
+		// Save as JSON
+		h.saveResponseToJSON(&response)
+
+		task.Result = &response
+		task.Status = TaskStatusCompleted
+		log.Printf("[INFO] Task %s completed successfully", taskID)
+	}()
+
+	return c.JSON(fiber.Map{
+		"task_id": taskID,
+		"status":  task.Status,
+	})
+}
+
+func (h *VisionHandler) GetTaskStatus(c *fiber.Ctx) error {
+	id := c.Params("id")
+	val, ok := h.Tasks.Load(id)
+	if !ok {
+		return c.Status(404).JSON(fiber.Map{"error": "Task not found"})
+	}
+
+	task := val.(*ProcessingTask)
+	return c.JSON(task)
 }
 
 func (h *VisionHandler) handleToolUse(block anthropic.ContentBlockUnion, resp *geometry.AIResponse) {

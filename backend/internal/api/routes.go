@@ -7,17 +7,15 @@ import (
 )
 
 func RegisterRoutes(app *fiber.App) {
-	// Initialize clients
 	visionClient := vision.NewClient()
-	
-	// Initialize handlers
+
 	visionHandler := handlers.NewVisionHandler(visionClient)
 
-	// API Group
 	api := app.Group("/api/v1")
 
-	// Routes
 	api.Post("/vision/map-floorplan", visionHandler.MapFloorplan)
+	api.Post("/vision/map-floorplan-async", visionHandler.MapFloorplanAsync)
+	api.Get("/vision/tasks/:id", visionHandler.GetTaskStatus)
 	api.Get("/projects", visionHandler.ListProjects)
 	api.Get("/projects/:id", visionHandler.GetProject)
 }

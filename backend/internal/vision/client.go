@@ -32,7 +32,7 @@ func (c *Client) ProcessFloorplan(ctx context.Context, imageData []byte, mimeTyp
 	// Convert mimeType to SDK constant
 	var mediaType anthropic.Base64ImageSourceMediaType
 	switch mimeType {
-	case "image/jpeg":
+	case "image/jpeg", "image/jpg":
 		mediaType = anthropic.Base64ImageSourceMediaTypeImageJPEG
 	case "image/png":
 		mediaType = anthropic.Base64ImageSourceMediaTypeImagePNG
@@ -157,7 +157,7 @@ Base your structural mapping STRICTLY on the analyst's findings above. Ignore no
 	))
 
 	params := anthropic.MessageNewParams{
-		Model:     anthropic.Model("claude-sonnet-4-6"),
+		Model:      anthropic.Model("claude-sonnet-4-6"),
 		MaxTokens: 4096,
 		Tools:     tools,
 		Messages:  messages,
@@ -259,7 +259,7 @@ func (c *Client) AnalyzeFloorPlan(ctx context.Context, imageData []byte, mimeTyp
 	// Convert mimeType to SDK constant
 	var mediaType anthropic.Base64ImageSourceMediaType
 	switch mimeType {
-	case "image/jpeg":
+	case "image/jpeg", "image/jpg":
 		mediaType = anthropic.Base64ImageSourceMediaTypeImageJPEG
 	case "image/png":
 		mediaType = anthropic.Base64ImageSourceMediaTypeImagePNG
@@ -281,9 +281,9 @@ Analise a imagem da planta baixa passo a passo, identificando paredes reais estr
 Depois, chame a ferramenta 'record_analyst_report' para registrar seu relatório estruturado. Mantenha a política de Zero-Pixel (use 0.0 a 1.0) nas descrições de posição.`, width, height, refinementContext)
 
 	params := anthropic.MessageNewParams{
-		Model:     anthropic.Model("claude-sonnet-4-6"),
-		MaxTokens: 4096,
-		Tools:     []anthropic.ToolUnionParam{GetAnalystToolDefinition()},
+		Model:      anthropic.Model("claude-sonnet-4-6"),
+		MaxTokens:  4096,
+		Tools:      []anthropic.ToolUnionParam{GetAnalystToolDefinition()},
 		ToolChoice: anthropic.ToolChoiceUnionParam{
 			OfTool: &anthropic.ToolChoiceToolParam{
 				Type:     "tool",
